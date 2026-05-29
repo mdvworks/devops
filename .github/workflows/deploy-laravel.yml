@@ -103,6 +103,14 @@ jobs:
       DOCKER_PASSWORD: ${{ needs.load_secrets.outputs.docker_password }}
 
     steps:
+    - name: Debug outputs
+      run: |
+        echo "env_repo_token length: ${#ENV_REPO_TOKEN}"
+        echo "docker_username: $DOCKER_USERNAME"
+      env:
+        ENV_REPO_TOKEN: ${{ needs.load_secrets.outputs.env_repo_token }}
+        DOCKER_USERNAME: ${{ needs.load_secrets.outputs.docker_username }}
+
     - name: Checkout project code
       uses: actions/checkout@v4
 
