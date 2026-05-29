@@ -80,10 +80,16 @@ jobs:
       run: |
         SECRETS=$(ssh -i ~/.ssh/id_ed25519 michael@100.96.143.63 "cat /etc/devops/secrets.env")
 
-        DOCKER_USERNAME=$(echo "$SECRETS" | grep ^DOCKER_USERNAME | cut -d '=' -f2)
-        DOCKER_PASSWORD=$(echo "$SECRETS" | grep ^DOCKER_PASSWORD | cut -d '=' -f2)
-        KUBE_CONFIG=$(echo "$SECRETS" | grep ^KUBE_CONFIG | cut -d '=' -f2)
-        ENV_REPO_TOKEN=$(echo "$SECRETS" | grep ^ENV_REPO_TOKEN | cut -d '=' -f2)
+        DOCKER_USERNAME=$(echo "$SECRETS" | grep ^DOCKER_USERNAME | cut -d '=' -f2-)
+        DOCKER_PASSWORD=$(echo "$SECRETS" | grep ^DOCKER_PASSWORD | cut -d '=' -f2-)
+        KUBE_CONFIG=$(echo "$SECRETS" | grep ^KUBE_CONFIG | cut -d '=' -f2-)
+        ENV_REPO_TOKEN=$(echo "$SECRETS" | grep ^ENV_REPO_TOKEN | cut -d '=' -f2-)
+
+        echo "=== Debug lengths ==="
+        echo "DOCKER_USERNAME length: ${#DOCKER_USERNAME}"
+        echo "DOCKER_PASSWORD length: ${#DOCKER_PASSWORD}"
+        echo "KUBE_CONFIG length: ${#KUBE_CONFIG}"
+        echo "ENV_REPO_TOKEN length: ${#ENV_REPO_TOKEN}"
 
         echo "docker_username=$DOCKER_USERNAME" >> $GITHUB_OUTPUT
         echo "docker_password=$DOCKER_PASSWORD" >> $GITHUB_OUTPUT
