@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{APP_NAME}}
+  labels:
+    app: {{APP_NAME}}
+spec:
+  replicas: {{REPLICAS}}
+  selector:
+    matchLabels:
+      app: {{APP_NAME}}
+  template:
+    metadata:
+      labels:
+        app: {{APP_NAME}}
+    spec:
+      containers:
+      - name: {{APP_NAME}}
+        image: {{DOCKER_IMAGE}}
+        ports:
+        - containerPort: {{CONTAINER_PORT}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{APP_NAME}}-service
+spec:
+  selector:
+    app: {{APP_NAME}}
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: {{CONTAINER_PORT}}
+  type: ClusterIP
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{APP_NAME}}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+spec:
+  ingressClassName: traefik
+  rules:
+  - host: {{HOST}}
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: {{APP_NAME}}-service
+            port:
+              number: 80

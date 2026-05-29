@@ -1,0 +1,257 @@
+name: Reusable Deploy Node.js
+
+on:
+  workflow_call:
+    inputs:
+      app_name:
+        description: 'Nama app'
+        required: true
+        type: string
+      image_name:
+        description: 'Nama image Docker tanpa username'
+        required: true
+        type: string
+      host:
+        description: 'Domain host untuk ingress'
+        required: true
+        type: string
+      env_file:
+        description: 'Nama file .env di env-config repo'
+        required: true
+        type: string
+      node_version:
+        description: 'Versi Node.js'
+        required: false
+        type: string
+        default: '20'
+      replicas:
+        description: 'Jumlah replicas kubernetes'
+        required: false
+        type: number
+        default: 1
+      container_port:
+        description: 'Port container'
+        required: false
+        type: number
+        default: 3000
+    secrets:
+      ENV_REPO_TOKEN:
+        required: true
+      DOCKER_USERNAME:
+        required: true
+      DOCKER_PASSWORD:
+        required: true
+      TS_AUTHKEY:
+        required: true
+      KUBE_CONFIG:
+        required: true
+
+jobs:
+  # ─────────────────────────────────────────
+  # JOB 1 — TEST
+  # ─────────────────────────────────────────
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout project code
+      uses: actions/checkout@v4
+
+    - name: Checkout env config repo
+      uses: actions/checkout@v4
+      with:
+        repository: michaedv/scc
+        token: ${{ secrets.ENV_REPO_TOKEN }}
+        path: env-configs
+
+    - name: Copy .env
+      run: cp env-configs/${{ inputs.env_file }} .env
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node_version }}
+
+    - name: Install pnpm
+      run: npm install -g pnpm@8
+
+    - name: Install Dependencies
+      run: pnpm install
+
+    - name: Run Jest
+      run: pnpm test
+
+  # ─────────────────────────────────────────
+  # JOB 2 — BUILD
+  # ─────────────────────────────────────────
+  build:
+    name: Build & Push Image
+    runs-on: ubuntu-latest
+    needs: [test]
+
+    steps:
+    - name: Checkout project code
+      uses: actions/checkout@v4
+
+    - name: Checkout env config repo
+      uses: actions/checkout@v4
+      with:
+        repository: michaedv/scc
+        token: ${{ secrets.ENV_REPO_TOKEN }}
+        path: env-configs
+
+    - name: Copy .env
+      run: cp env-configs/${{ inputs.env_file }} .env
+
+    - name: Checkout devops repo
+      uses: actions/checkout@v4
+      with:
+        repository: michaedv/devops
+        token: ${{ secrets.ENV_REPO_TOKEN }}
+        path: devops-repo
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+
+    - name: Build and Push Docker Image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: true
+        tags: ${{ secrets.DOCKER_USERNAME }}/${{ inputs.image_name }}:latest
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+  # ─────────────────────────────────────────
+  # JOB 3 — SECURITY SCAN
+  # ─────────────────────────────────────────
+  scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: [build]
+
+    steps:
+    - name: Checkout project code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node_version }}
+
+    - name: Install pnpm
+      run: npm install -g pnpm@8
+
+    - name: Install Dependencies
+      run: pnpm install
+
+    - name: pnpm audit
+      run: pnpm audit --audit-level=critical --prod || true
+
+    - name: Trivy scan Docker image
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ secrets.DOCKER_USERNAME }}/${{ inputs.image_name }}:latest
+        format: table
+        exit-code: '1'
+        severity: CRITICAL
+        ignore-unfixed: true
+        vuln-type: library
+
+  # ─────────────────────────────────────────
+  # JOB 4 — DEPLOY
+  # ─────────────────────────────────────────
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [scan]
+
+    steps:
+    - name: Setup Tailscale
+      uses: tailscale/github-action@v2
+      with:
+        authkey: ${{ secrets.TS_AUTHKEY }}
+
+    - name: Set up Kubeconfig
+      run: |
+        mkdir -p $HOME/.kube
+        echo "${{ secrets.KUBE_CONFIG }}" | base64 --decode > $HOME/.kube/config
+        chmod 600 $HOME/.kube/config
+
+    - name: Verify kubectl connection
+      run: kubectl get nodes
+
+    - name: Checkout devops repo
+      uses: actions/checkout@v4
+      with:
+        repository: michaedv/devops
+        token: ${{ secrets.ENV_REPO_TOKEN }}
+        path: devops-repo
+
+    - name: Generate k8s manifests dari template
+      run: |
+        sed \
+          -e 's|{{APP_NAME}}|${{ inputs.app_name }}|g' \
+          -e 's|{{DOCKER_IMAGE}}|${{ secrets.DOCKER_USERNAME }}/${{ inputs.image_name }}:latest|g' \
+          -e 's|{{REPLICAS}}|${{ inputs.replicas }}|g' \
+          -e 's|{{CONTAINER_PORT}}|${{ inputs.container_port }}|g' \
+          -e 's|{{HOST}}|${{ inputs.host }}|g' \
+          devops-repo/k8s/templates/node-app.yml > rendered-k8s.yml
+
+    - name: Deploy to Kubernetes
+      run: |
+        kubectl apply -f rendered-k8s.yml
+        kubectl set image deployment/${{ inputs.app_name }} \
+          ${{ inputs.app_name }}=${{ secrets.DOCKER_USERNAME }}/${{ inputs.image_name }}:latest
+        kubectl rollout restart deployment/${{ inputs.app_name }}
+        kubectl rollout status deployment/${{ inputs.app_name }} --timeout=120s
+
+  # ─────────────────────────────────────────
+  # JOB 5 — SUMMARY
+  # ─────────────────────────────────────────
+  summary:
+    name: Job Summary
+    runs-on: ubuntu-latest
+    needs: [test, build, scan, deploy]
+    if: always()
+
+    steps:
+    - name: Write summary
+      run: |
+        STATUS="${{ needs.deploy.result }}"
+
+        if [ "$STATUS" = "success" ]; then
+          ICON="✅"
+          MSG="Deploy berhasil"
+        else
+          ICON="❌"
+          MSG="Deploy gagal"
+        fi
+
+        cat >> $GITHUB_STEP_SUMMARY << EOF
+        # ${ICON} ${MSG}
+
+        | Info | Detail |
+        |------|--------|
+        | App | \`${{ inputs.app_name }}\` |
+        | Image | \`${{ secrets.DOCKER_USERNAME }}/${{ inputs.image_name }}:latest\` |
+        | Host | \`${{ inputs.host }}\` |
+        | Replicas | \`${{ inputs.replicas }}\` |
+        | Commit | \`${{ github.sha }}\` |
+        | Triggered by | \`${{ github.actor }}\` |
+
+        ### Pipeline Result
+        | Job | Status |
+        |-----|--------|
+        | Test | ${{ needs.test.result }} |
+        | Build | ${{ needs.build.result }} |
+        | Security Scan | ${{ needs.scan.result }} |
+        | Deploy | ${{ needs.deploy.result }} |
+        EOF
