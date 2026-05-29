@@ -15,10 +15,6 @@ on:
         description: 'Domain host untuk ingress'
         required: true
         type: string
-      env_file:
-        description: 'Nama file .env di env-config repo'
-        required: true
-        type: string
       php_version:
         description: 'Versi PHP'
         required: false
@@ -28,7 +24,7 @@ on:
         description: 'Versi Node.js'
         required: false
         type: string
-        default: ''
+        default: '22'
       use_pnpm:
         description: 'Pakai pnpm?'
         required: false
@@ -45,38 +41,64 @@ on:
         type: number
         default: 80
     secrets:
-      ENV_REPO_TOKEN:
-        required: true
-      DOCKER_USERNAME:
-        required: true
-      DOCKER_PASSWORD:
-        required: true
       TS_AUTHKEY:
         required: true
-      KUBE_CONFIG:
+      SSH_PRIVATE_KEY:
         required: true
 
 jobs:
   # ─────────────────────────────────────────
-  # JOB 1 — BUILD
+  # JOB 1 — LOAD SECRETS
+  # ─────────────────────────────────────────
+  load_secrets:
+    name: Load Secrets dari Server
+    runs-on: ubuntu-latest
+
+    outputs:
+      docker_username: ${{ steps.secrets.outputs.docker_username }}
+      docker_password: ${{ steps.secrets.outputs.docker_password }}
+      kube_config: ${{ steps.secrets.outputs.kube_config }}
+      env_repo_token: ${{ steps.secrets.outputs.env_repo_token }}
+
+    steps:
+    - name: Setup Tailscale
+      uses: tailscale/github-action@v2
+      with:
+        authkey: ${{ secrets.TS_AUTHKEY }}
+
+    - name: Setup SSH key
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+        chmod 600 ~/.ssh/id_ed25519
+        ssh-keyscan -H 100.96.143.63 >> ~/.ssh/known_hosts
+
+    - name: Ambil secrets dari server
+      id: secrets
+      run: |
+        SECRETS=$(ssh -i ~/.ssh/id_ed25519 michael@100.96.143.63 "cat /etc/devops/secrets.env")
+
+        DOCKER_USERNAME=$(echo "$SECRETS" | grep ^DOCKER_USERNAME | cut -d '=' -f2)
+        DOCKER_PASSWORD=$(echo "$SECRETS" | grep ^DOCKER_PASSWORD | cut -d '=' -f2)
+        KUBE_CONFIG=$(echo "$SECRETS" | grep ^KUBE_CONFIG | cut -d '=' -f2)
+        ENV_REPO_TOKEN=$(echo "$SECRETS" | grep ^ENV_REPO_TOKEN | cut -d '=' -f2)
+
+        echo "docker_username=$DOCKER_USERNAME" >> $GITHUB_OUTPUT
+        echo "docker_password=$DOCKER_PASSWORD" >> $GITHUB_OUTPUT
+        echo "kube_config=$KUBE_CONFIG" >> $GITHUB_OUTPUT
+        echo "env_repo_token=$ENV_REPO_TOKEN" >> $GITHUB_OUTPUT
+
+  # ─────────────────────────────────────────
+  # JOB 2 — BUILD
   # ─────────────────────────────────────────
   build:
     name: Build & Push Image
     runs-on: ubuntu-latest
+    needs: [load_secrets]
 
     steps:
     - name: Checkout project code
       uses: actions/checkout@v4
-
-    - name: Checkout env config repo
-      uses: actions/checkout@v4
-      with:
-        repository: michaedv/scc
-        token: ${{ secrets.ENV_REPO_TOKEN }}
-        path: env-configs
-
-    - name: Copy .env
-      run: cp env-configs/${{ inputs.env_file }} .env
 
     - name: Setup PHP
       uses: shivammathur/setup-php@v2
@@ -96,7 +118,7 @@ jobs:
     - name: Install pnpm & build frontend
       if: inputs.node_version != '' && inputs.use_pnpm == true
       run: |
-        npm install -g pnpm@8
+        npm install -g pnpm
         pnpm install
         pnpm run build
 
@@ -109,8 +131,8 @@ jobs:
     - name: Checkout devops repo
       uses: actions/checkout@v4
       with:
-        repository: michaedv/devops
-        token: ${{ secrets.ENV_REPO_TOKEN }}
+        repository: mdvworks/devops
+        token: ${{ needs.load_secrets.outputs.env_repo_token }}
         path: devops-repo
 
     - name: Copy docker config dari devops repo
@@ -125,25 +147,25 @@ jobs:
     - name: Log in to Docker Hub
       uses: docker/login-action@v3
       with:
-        username: ${{ secrets.DOCKER_USERNAME }}
-        password: ${{ secrets.DOCKER_PASSWORD }}
+        username: ${{ needs.load_secrets.outputs.docker_username }}
+        password: ${{ needs.load_secrets.outputs.docker_password }}
 
     - name: Build and Push Docker Image
       uses: docker/build-push-action@v5
       with:
         context: .
         push: true
-        tags: ${{ secrets.DOCKER_USERNAME }}/${{ inputs.image_name }}:latest
+        tags: ${{ needs.load_secrets.outputs.docker_username }}/${{ inputs.image_name }}:latest
         cache-from: type=gha
         cache-to: type=gha,mode=max
 
   # ─────────────────────────────────────────
-  # JOB 2 — SECURITY SCAN
+  # JOB 3 — SECURITY SCAN
   # ─────────────────────────────────────────
   scan:
     name: Security Scan
     runs-on: ubuntu-latest
-    needs: [build]
+    needs: [load_secrets, build]
 
     steps:
     - name: Checkout project code
@@ -158,37 +180,13 @@ jobs:
     - name: Install Composer Dependencies
       run: composer install --no-ansi --no-interaction --no-scripts --no-progress --prefer-dist
 
-    - name: Setup Node.js
-      if: inputs.node_version != ''
-      uses: actions/setup-node@v4
-      with:
-        node-version: ${{ inputs.node_version }}
-
-    - name: Install pnpm
-      if: inputs.node_version != '' && inputs.use_pnpm == true
-      run: |
-        npm install -g pnpm@8
-        pnpm install
-
-    - name: Install npm
-      if: inputs.node_version != '' && inputs.use_pnpm == false
-      run: npm ci
-
     - name: Composer audit
       run: composer audit --no-dev || true
-
-    - name: pnpm audit
-      if: inputs.node_version != '' && inputs.use_pnpm == true
-      run: pnpm audit --audit-level=critical --prod || true
-
-    - name: npm audit
-      if: inputs.node_version != '' && inputs.use_pnpm == false
-      run: npm audit --audit-level=critical --omit=dev || true
 
     - name: Trivy scan Docker image
       uses: aquasecurity/trivy-action@master
       with:
-        image-ref: ${{ secrets.DOCKER_USERNAME }}/${{ inputs.image_name }}:latest
+        image-ref: ${{ needs.load_secrets.outputs.docker_username }}/${{ inputs.image_name }}:latest
         format: table
         exit-code: '1'
         severity: CRITICAL
@@ -196,12 +194,12 @@ jobs:
         vuln-type: library
 
   # ─────────────────────────────────────────
-  # JOB 3 — DEPLOY
+  # JOB 4 — DEPLOY
   # ─────────────────────────────────────────
   deploy:
     name: Deploy to Production
     runs-on: ubuntu-latest
-    needs: [scan]
+    needs: [load_secrets, scan]
 
     steps:
     - name: Setup Tailscale
@@ -209,10 +207,17 @@ jobs:
       with:
         authkey: ${{ secrets.TS_AUTHKEY }}
 
+    - name: Setup SSH key
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+        chmod 600 ~/.ssh/id_ed25519
+        ssh-keyscan -H 100.96.143.63 >> ~/.ssh/known_hosts
+
     - name: Set up Kubeconfig
       run: |
         mkdir -p $HOME/.kube
-        echo "${{ secrets.KUBE_CONFIG }}" | base64 --decode > $HOME/.kube/config
+        echo "${{ needs.load_secrets.outputs.kube_config }}" | base64 --decode > $HOME/.kube/config
         chmod 600 $HOME/.kube/config
 
     - name: Verify kubectl connection
@@ -221,15 +226,15 @@ jobs:
     - name: Checkout devops repo
       uses: actions/checkout@v4
       with:
-        repository: michaedv/devops
-        token: ${{ secrets.ENV_REPO_TOKEN }}
+        repository: mdvworks/devops
+        token: ${{ needs.load_secrets.outputs.env_repo_token }}
         path: devops-repo
 
     - name: Generate k8s manifests dari template
       run: |
         sed \
           -e 's|{{APP_NAME}}|${{ inputs.app_name }}|g' \
-          -e 's|{{DOCKER_IMAGE}}|${{ secrets.DOCKER_USERNAME }}/${{ inputs.image_name }}:latest|g' \
+          -e 's|{{DOCKER_IMAGE}}|${{ needs.load_secrets.outputs.docker_username }}/${{ inputs.image_name }}:latest|g' \
           -e 's|{{REPLICAS}}|${{ inputs.replicas }}|g' \
           -e 's|{{CONTAINER_PORT}}|${{ inputs.container_port }}|g' \
           -e 's|{{HOST}}|${{ inputs.host }}|g' \
@@ -239,17 +244,17 @@ jobs:
       run: |
         kubectl apply -f rendered-k8s.yml
         kubectl set image deployment/${{ inputs.app_name }} \
-          ${{ inputs.app_name }}=${{ secrets.DOCKER_USERNAME }}/${{ inputs.image_name }}:latest
+          ${{ inputs.app_name }}=${{ needs.load_secrets.outputs.docker_username }}/${{ inputs.image_name }}:latest
         kubectl rollout restart deployment/${{ inputs.app_name }}
         kubectl rollout status deployment/${{ inputs.app_name }} --timeout=120s
 
   # ─────────────────────────────────────────
-  # JOB 4 — SUMMARY
+  # JOB 5 — SUMMARY
   # ─────────────────────────────────────────
   summary:
     name: Job Summary
     runs-on: ubuntu-latest
-    needs: [build, scan, deploy]
+    needs: [load_secrets, build, scan, deploy]
     if: always()
 
     steps:
@@ -271,7 +276,6 @@ jobs:
         | Info | Detail |
         |------|--------|
         | App | \`${{ inputs.app_name }}\` |
-        | Image | \`${{ secrets.DOCKER_USERNAME }}/${{ inputs.image_name }}:latest\` |
         | Host | \`${{ inputs.host }}\` |
         | Replicas | \`${{ inputs.replicas }}\` |
         | Commit | \`${{ github.sha }}\` |
@@ -280,6 +284,7 @@ jobs:
         ### Pipeline Result
         | Job | Status |
         |-----|--------|
+        | Load Secrets | ${{ needs.load_secrets.result }} |
         | Build | ${{ needs.build.result }} |
         | Security Scan | ${{ needs.scan.result }} |
         | Deploy | ${{ needs.deploy.result }} |
