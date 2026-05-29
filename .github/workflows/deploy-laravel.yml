@@ -130,11 +130,15 @@ jobs:
         npm ci
         npm run build
 
+    - name: Set env repo token
+      run: echo "ENV_REPO_TOKEN=${{ needs.load_secrets.outputs.env_repo_token }}" >> $GITHUB_ENV
+
+
     - name: Checkout devops repo
       uses: actions/checkout@v4
       with:
         repository: mdvworks/devops
-        token: ${{ needs.load_secrets.outputs.env_repo_token }}
+        token: ${{ env.ENV_REPO_TOKEN }}
         path: devops-repo
 
     - name: Copy docker config dari devops repo
