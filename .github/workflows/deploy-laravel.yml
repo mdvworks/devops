@@ -270,7 +270,7 @@ jobs:
         repository: mdvworks/devops
         token: ${{ env.ENV_REPO_TOKEN }}
         path: devops-repo
-    
+
     - name: Generate k8s manifests dari template
       run: |
         sed \
