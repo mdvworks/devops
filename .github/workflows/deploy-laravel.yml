@@ -284,7 +284,9 @@ jobs:
           devops-repo/k8s/templates/laravel-app.yml > rendered-k8s.yml
 
     - name: Debug rendered manifest
-      run: cat rendered-k8s.yml
+      run: |
+        echo "SCC_API_KEY length: ${#SCC_API_KEY}"
+        echo "SCC_URL length: ${#SCC_URL}"
 
     - name: Deploy to Kubernetes
       run: |
