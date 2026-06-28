@@ -1,6 +1,4 @@
 #!/bin/sh
-# docker/entrypoint.sh
-
 set -e
 
 echo "🔧 Fetching config from SCC Service..."
@@ -14,18 +12,11 @@ if [ -z "$RESPONSE" ]; then
   exit 1
 fi
 
-# Convert JSON ke .env
-echo "$RESPONSE" | \
-  tr -d '{}' | \
-  tr ',' '\n' | \
-  sed 's/"//g' | \
-  sed 's/: /=/g' | \
-  sed '/^[[:space:]]*$/d' \
-  > /var/www/html/.env
+# Convert JSON ke .env pakai jq
+echo "$RESPONSE" | jq -r 'to_entries[] | "\(.key)=\(.value)"' > /var/www/html/.env
 
 echo "✅ Config loaded successfully"
 
-# Laravel setup
 cd /var/www/html
 php artisan config:cache
 php artisan route:cache
