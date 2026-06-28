@@ -98,7 +98,7 @@ jobs:
         echo "docker_username=$DOCKER_USERNAME" >> $GITHUB_OUTPUT
         echo "docker_password=$DOCKER_PASSWORD" >> $GITHUB_OUTPUT
         echo "kube_config=$KUBE_CONFIG" >> $GITHUB_OUTPUT
-        echo "env_repo_token=$ENV_REPO_TOKEN" >> $GITHUB_OUTPUT
+        echo "env_repo_token=$(echo -n "$ENV_REPO_TOKEN" | base64 -w 0)" >> $GITHUB_OUTPUT
         echo "scc_api_key=$SCC_API_KEY" >> $GITHUB_OUTPUT
         echo "scc_url=$SCC_URL" >> $GITHUB_OUTPUT
 
@@ -151,8 +151,9 @@ jobs:
       run: |
         npm ci
         npm run build
-
-
+    - name: Decode token
+      run: |
+        echo "ENV_REPO_TOKEN=$(echo '${{ needs.load_secrets.outputs.env_repo_token }}' | base64 --decode)" >> $GITHUB_ENV
     - name: Checkout devops repo
       uses: actions/checkout@v4
       with:
@@ -254,7 +255,9 @@ jobs:
 
     - name: Verify kubectl connection
       run: kubectl get nodes
-
+    - name: Decode token
+      run: |
+        echo "ENV_REPO_TOKEN=$(echo '${{ needs.load_secrets.outputs.env_repo_token }}' | base64 --decode)" >> $GITHUB_ENV
     - name: Checkout devops repo
       uses: actions/checkout@v4
       with:
