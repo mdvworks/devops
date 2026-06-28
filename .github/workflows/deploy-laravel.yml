@@ -283,6 +283,9 @@ jobs:
           -e "s|{{SCC_URL}}|${SCC_URL}|g" \
           devops-repo/k8s/templates/laravel-app.yml > rendered-k8s.yml
 
+    - name: Debug rendered manifest
+      run: cat rendered-k8s.yml
+
     - name: Deploy to Kubernetes
       run: |
         kubectl apply -f rendered-k8s.yml
