@@ -285,8 +285,14 @@ jobs:
 
     - name: Debug rendered manifest
       run: |
-        echo "SCC_API_KEY length: ${#SCC_API_KEY}"
-        echo "SCC_URL length: ${#SCC_URL}"
+        SCC_API_KEY_DECODED=$(echo '${{ needs.load_secrets.outputs.scc_api_key }}' | base64 --decode)
+        SCC_URL_DECODED=$(echo '${{ needs.load_secrets.outputs.scc_url }}' | base64 --decode)
+        
+        echo "SCC_API_KEY_DECODED length: ${#SCC_API_KEY_DECODED}"
+        echo "SCC_URL_DECODED length: ${#SCC_URL_DECODED}"
+        
+        echo "SCC_API_KEY=${SCC_API_KEY_DECODED}" >> $GITHUB_ENV
+        echo "SCC_URL=${SCC_URL_DECODED}" >> $GITHUB_ENV
 
     - name: Deploy to Kubernetes
       run: |
