@@ -255,14 +255,17 @@ jobs:
 
     - name: Verify kubectl connection
       run: kubectl get nodes
+
     - name: Decode token
       run: |
         echo "ENV_REPO_TOKEN=$(echo '${{ needs.load_secrets.outputs.env_repo_token }}' | base64 --decode)" >> $GITHUB_ENV
+
+
     - name: Checkout devops repo
       uses: actions/checkout@v4
       with:
         repository: mdvworks/devops
-        token: ${{ needs.load_secrets.outputs.env_repo_token }}
+        token: token: ${{ needs.load_secrets.outputs.env_repo_token }}
         path: devops-repo
 
     - name: Generate k8s manifests dari template
