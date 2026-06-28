@@ -265,7 +265,7 @@ jobs:
       uses: actions/checkout@v4
       with:
         repository: mdvworks/devops
-        token: ${{ needs.load_secrets.outputs.env_repo_token }}
+        token: ${{ env.ENV_REPO_TOKEN }}
         path: devops-repo
 
     - name: Generate k8s manifests dari template
