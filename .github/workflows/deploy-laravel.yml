@@ -59,6 +59,8 @@ jobs:
       docker_password: ${{ steps.secrets.outputs.docker_password }}
       kube_config: ${{ steps.secrets.outputs.kube_config }}
       env_repo_token: ${{ steps.secrets.outputs.env_repo_token }}
+      scc_api_key: ${{ steps.secrets.outputs.scc_api_key }}   
+      scc_url: ${{ steps.secrets.outputs.scc_url }} 
 
     steps:
     - name: Setup Tailscale
@@ -84,6 +86,8 @@ jobs:
         DOCKER_PASSWORD=$(echo "$SECRETS" | grep ^DOCKER_PASSWORD | cut -d '=' -f2-)
         KUBE_CONFIG=$(echo "$SECRETS" | grep ^KUBE_CONFIG | cut -d '=' -f2-)
         ENV_REPO_TOKEN=$(echo "$SECRETS" | grep ^ENV_REPO_TOKEN | cut -d '=' -f2-)
+        SCC_API_KEY=$(echo "$SECRETS" | grep ^SCC_API_KEY | cut -d '=' -f2-)
+        SCC_URL=$(echo "$SECRETS" | grep ^SCC_URL | cut -d '=' -f2-)
 
         echo "=== Debug lengths ==="
         echo "DOCKER_USERNAME length: ${#DOCKER_USERNAME}"
@@ -95,6 +99,8 @@ jobs:
         echo "docker_password=$DOCKER_PASSWORD" >> $GITHUB_OUTPUT
         echo "kube_config=$KUBE_CONFIG" >> $GITHUB_OUTPUT
         echo "env_repo_token=$ENV_REPO_TOKEN" >> $GITHUB_OUTPUT
+        echo "scc_api_key=$SCC_API_KEY" >> $GITHUB_OUTPUT
+        echo "scc_url=$SCC_URL" >> $GITHUB_OUTPUT
 
   # ─────────────────────────────────────────
   # JOB 2 — BUILD
@@ -146,9 +152,6 @@ jobs:
         npm ci
         npm run build
 
-    - name: Set env repo token
-      run: echo "ENV_REPO_TOKEN=${{ needs.load_secrets.outputs.env_repo_token }}" >> $GITHUB_ENV
-
 
     - name: Checkout devops repo
       uses: actions/checkout@v4
@@ -162,6 +165,7 @@ jobs:
         mkdir -p docker
         cp devops-repo/docker/laravel/nginx.conf docker/nginx.conf
         cp devops-repo/docker/laravel/supervisord.conf docker/supervisord.conf
+        cp devops-repo/docker/laravel/entrypoint.sh docker/entrypoint.sh
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
@@ -226,6 +230,8 @@ jobs:
       ENV_REPO_TOKEN: ${{ needs.load_secrets.outputs.env_repo_token }}
       DOCKER_USERNAME: ${{ needs.load_secrets.outputs.docker_username }}
       KUBE_CONFIG: ${{ needs.load_secrets.outputs.kube_config }}
+      SCC_API_KEY: ${{ needs.load_secrets.outputs.scc_api_key }}
+      SCC_URL: ${{ needs.load_secrets.outputs.scc_url }}
 
     steps:
     - name: Setup Tailscale
@@ -264,6 +270,8 @@ jobs:
           -e 's|{{REPLICAS}}|${{ inputs.replicas }}|g' \
           -e 's|{{CONTAINER_PORT}}|${{ inputs.container_port }}|g' \
           -e 's|{{HOST}}|${{ inputs.host }}|g' \
+          -e 's|{{SCC_API_KEY}}|${{ needs.load_secrets.outputs.scc_api_key }}|g' \
+          -e 's|{{SCC_URL}}|${{ needs.load_secrets.outputs.scc_url }}|g' \
           devops-repo/k8s/templates/laravel-app.yml > rendered-k8s.yml
 
     - name: Deploy to Kubernetes
