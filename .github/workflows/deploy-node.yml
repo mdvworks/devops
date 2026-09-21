@@ -93,38 +93,12 @@ jobs:
         echo "scc_url=$(echo -n "$SCC_URL" | base64 -w 0)" >> $GITHUB_OUTPUT
 
   # ─────────────────────────────────────────
-  # JOB 2 — TEST
-  # ─────────────────────────────────────────
-  # test:
-  #   name: Test
-  #   runs-on: ubuntu-latest
-  #   needs: [load_secrets]
-
-  #   steps:
-  #   - name: Checkout project code
-  #     uses: actions/checkout@v4
-
-  #   - name: Setup Node.js
-  #     uses: actions/setup-node@v4
-  #     with:
-  #       node-version: ${{ inputs.node_version }}
-
-  #   - name: Install pnpm
-  #     run: npm install -g pnpm@8
-
-  #   - name: Install Dependencies
-  #     run: pnpm install
-
-  #   - name: Run Jest
-  #     run: pnpm test
-
-  # ─────────────────────────────────────────
-  # JOB 3 — BUILD
+  # JOB 2 — BUILD
   # ─────────────────────────────────────────
   build:
     name: Build & Push Image
     runs-on: ubuntu-latest
-    needs: [load_secrets, test]
+    needs: [load_secrets]
     env:
       DOCKER_USERNAME: ${{ needs.load_secrets.outputs.docker_username }}
       DOCKER_PASSWORD: ${{ needs.load_secrets.outputs.docker_password }}
@@ -168,7 +142,7 @@ jobs:
         cache-to: type=gha,mode=max
 
   # ─────────────────────────────────────────
-  # JOB 4 — SECURITY SCAN
+  # JOB 3 — SECURITY SCAN
   # ─────────────────────────────────────────
   scan:
     name: Security Scan
@@ -204,7 +178,7 @@ jobs:
         vuln-type: library
 
   # ─────────────────────────────────────────
-  # JOB 5 — DEPLOY
+  # JOB 4 — DEPLOY
   # ─────────────────────────────────────────
   deploy:
     name: Deploy to Production
@@ -269,12 +243,12 @@ jobs:
         kubectl rollout status deployment/${{ inputs.app_name }} --timeout=120s
 
   # ─────────────────────────────────────────
-  # JOB 6 — SUMMARY
+  # JOB 5 — SUMMARY
   # ─────────────────────────────────────────
   summary:
     name: Job Summary
     runs-on: ubuntu-latest
-    needs: [load_secrets, test, build, scan, deploy]
+    needs: [load_secrets, build, scan, deploy]
     if: always()
 
     steps:
@@ -305,7 +279,6 @@ jobs:
         | Job | Status |
         |-----|--------|
         | Load Secrets | ${{ needs.load_secrets.result }} |
-        | Test | ${{ needs.test.result }} |
         | Build | ${{ needs.build.result }} |
         | Security Scan | ${{ needs.scan.result }} |
         | Deploy | ${{ needs.deploy.result }} |
