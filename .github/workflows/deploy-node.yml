@@ -35,34 +35,88 @@ on:
         type: number
         default: 3000
     secrets:
-      ENV_REPO_TOKEN:
-        required: true
-      DOCKER_USERNAME:
-        required: true
-      DOCKER_PASSWORD:
-        required: true
       TS_AUTHKEY:
         required: true
-      KUBE_CONFIG:
+      SSH_PRIVATE_KEY:
         required: true
 
 jobs:
   # ─────────────────────────────────────────
-  # JOB 1 — TEST
+  # JOB 1 — LOAD SECRETS
+  # ─────────────────────────────────────────
+  load_secrets:
+    name: Load Secrets dari Server
+    runs-on: ubuntu-latest
+
+    outputs:
+      docker_username: ${{ steps.secrets.outputs.docker_username }}
+      docker_password: ${{ steps.secrets.outputs.docker_password }}
+      kube_config: ${{ steps.secrets.outputs.kube_config }}
+      env_repo_token: ${{ steps.secrets.outputs.env_repo_token }}
+      scc_api_key: ${{ steps.secrets.outputs.scc_api_key }}
+      scc_url: ${{ steps.secrets.outputs.scc_url }}
+
+    steps:
+    - name: Setup Tailscale
+      uses: tailscale/github-action@v2
+      with:
+        authkey: ${{ secrets.TS_AUTHKEY }}
+
+    - name: Setup SSH key
+      run: |
+        mkdir -p ~/.ssh
+        cat <<'SSHKEY' > ~/.ssh/id_ed25519
+        ${{ secrets.SSH_PRIVATE_KEY }}
+        SSHKEY
+        chmod 600 ~/.ssh/id_ed25519
+        ssh-keyscan -H 100.96.143.63 >> ~/.ssh/known_hosts
+
+    - name: Ambil secrets dari server
+      id: secrets
+      run: |
+        SECRETS=$(ssh -i ~/.ssh/id_ed25519 michael@100.96.143.63 "cat /etc/devops/secrets.env")
+
+        DOCKER_USERNAME=$(echo "$SECRETS" | grep ^DOCKER_USERNAME | cut -d '=' -f2-)
+        DOCKER_PASSWORD=$(echo "$SECRETS" | grep ^DOCKER_PASSWORD | cut -d '=' -f2-)
+        KUBE_CONFIG=$(echo "$SECRETS" | grep ^KUBE_CONFIG | cut -d '=' -f2-)
+        ENV_REPO_TOKEN=$(echo "$SECRETS" | grep ^ENV_REPO_TOKEN | cut -d '=' -f2-)
+        SCC_API_KEY=$(echo "$SECRETS" | grep ^SCC_API_KEY | cut -d '=' -f2-)
+        SCC_URL=$(echo "$SECRETS" | grep ^SCC_URL | cut -d '=' -f2-)
+
+        echo "=== Debug lengths ==="
+        echo "DOCKER_USERNAME length: ${#DOCKER_USERNAME}"
+        echo "DOCKER_PASSWORD length: ${#DOCKER_PASSWORD}"
+        echo "KUBE_CONFIG length: ${#KUBE_CONFIG}"
+        echo "ENV_REPO_TOKEN length: ${#ENV_REPO_TOKEN}"
+
+        echo "docker_username=$DOCKER_USERNAME" >> $GITHUB_OUTPUT
+        echo "docker_password=$DOCKER_PASSWORD" >> $GITHUB_OUTPUT
+        echo "kube_config=$KUBE_CONFIG" >> $GITHUB_OUTPUT
+        echo "env_repo_token=$(echo -n "$ENV_REPO_TOKEN" | base64 -w 0)" >> $GITHUB_OUTPUT
+        echo "scc_api_key=$(echo -n "$SCC_API_KEY" | base64 -w 0)" >> $GITHUB_OUTPUT
+        echo "scc_url=$(echo -n "$SCC_URL" | base64 -w 0)" >> $GITHUB_OUTPUT
+
+  # ─────────────────────────────────────────
+  # JOB 2 — TEST
   # ─────────────────────────────────────────
   test:
     name: Test
     runs-on: ubuntu-latest
+    needs: [load_secrets]
 
     steps:
     - name: Checkout project code
       uses: actions/checkout@v4
 
+    - name: Decode token
+      run: |
+        echo "ENV_REPO_TOKEN=$(echo '${{ needs.load_secrets.outputs.env_repo_token }}' | base64 --decode)" >> $GITHUB_ENV
+
     - name: Checkout env config repo
       uses: actions/checkout@v4
       with:
         repository: michaedv/scc
-        token: ${{ secrets.ENV_REPO_TOKEN }}
+        token: ${{ env.ENV_REPO_TOKEN }}
         path: env-configs
 
     - name: Copy .env
@@ -83,22 +137,34 @@ jobs:
       run: pnpm test
 
   # ─────────────────────────────────────────
-  # JOB 2 — BUILD
+  # JOB 3 — BUILD
   # ─────────────────────────────────────────
   build:
     name: Build & Push Image
     runs-on: ubuntu-latest
-    needs: [test]
+    needs: [load_secrets, test]
+    env:
+      DOCKER_USERNAME: ${{ needs.load_secrets.outputs.docker_username }}
+      DOCKER_PASSWORD: ${{ needs.load_secrets.outputs.docker_password }}
 
     steps:
+    - name: Debug job outputs
+      run: |
+        echo "DOCKER_USERNAME length: ${#DOCKER_USERNAME}"
+        echo "DOCKER_PASSWORD length: ${#DOCKER_PASSWORD}"
+
     - name: Checkout project code
       uses: actions/checkout@v4
+
+    - name: Decode token
+      run: |
+        echo "ENV_REPO_TOKEN=$(echo '${{ needs.load_secrets.outputs.env_repo_token }}' | base64 --decode)" >> $GITHUB_ENV
 
     - name: Checkout env config repo
       uses: actions/checkout@v4
       with:
         repository: michaedv/scc
-        token: ${{ secrets.ENV_REPO_TOKEN }}
+        token: ${{ env.ENV_REPO_TOKEN }}
         path: env-configs
 
     - name: Copy .env
@@ -108,7 +174,7 @@ jobs:
       uses: actions/checkout@v4
       with:
         repository: michaedv/devops
-        token: ${{ secrets.ENV_REPO_TOKEN }}
+        token: ${{ env.ENV_REPO_TOKEN }}
         path: devops-repo
 
     - name: Set up Docker Buildx
@@ -117,25 +183,25 @@ jobs:
     - name: Log in to Docker Hub
       uses: docker/login-action@v3
       with:
-        username: ${{ secrets.DOCKER_USERNAME }}
-        password: ${{ secrets.DOCKER_PASSWORD }}
+        username: ${{ needs.load_secrets.outputs.docker_username }}
+        password: ${{ needs.load_secrets.outputs.docker_password }}
 
     - name: Build and Push Docker Image
       uses: docker/build-push-action@v5
       with:
         context: .
         push: true
-        tags: ${{ secrets.DOCKER_USERNAME }}/${{ inputs.image_name }}:latest
+        tags: ${{ needs.load_secrets.outputs.docker_username }}/${{ inputs.image_name }}:latest
         cache-from: type=gha
         cache-to: type=gha,mode=max
 
   # ─────────────────────────────────────────
-  # JOB 3 — SECURITY SCAN
+  # JOB 4 — SECURITY SCAN
   # ─────────────────────────────────────────
   scan:
     name: Security Scan
     runs-on: ubuntu-latest
-    needs: [build]
+    needs: [load_secrets, build]
 
     steps:
     - name: Checkout project code
@@ -158,7 +224,7 @@ jobs:
     - name: Trivy scan Docker image
       uses: aquasecurity/trivy-action@master
       with:
-        image-ref: ${{ secrets.DOCKER_USERNAME }}/${{ inputs.image_name }}:latest
+        image-ref: ${{ needs.load_secrets.outputs.docker_username }}/${{ inputs.image_name }}:latest
         format: table
         exit-code: '1'
         severity: CRITICAL
@@ -166,12 +232,16 @@ jobs:
         vuln-type: library
 
   # ─────────────────────────────────────────
-  # JOB 4 — DEPLOY
+  # JOB 5 — DEPLOY
   # ─────────────────────────────────────────
   deploy:
     name: Deploy to Production
     runs-on: ubuntu-latest
-    needs: [scan]
+    needs: [load_secrets, scan]
+    env:
+      ENV_REPO_TOKEN: ${{ needs.load_secrets.outputs.env_repo_token }}
+      DOCKER_USERNAME: ${{ needs.load_secrets.outputs.docker_username }}
+      KUBE_CONFIG: ${{ needs.load_secrets.outputs.kube_config }}
 
     steps:
     - name: Setup Tailscale
@@ -182,44 +252,57 @@ jobs:
     - name: Set up Kubeconfig
       run: |
         mkdir -p $HOME/.kube
-        echo "${{ secrets.KUBE_CONFIG }}" | base64 --decode > $HOME/.kube/config
+        echo "${{ needs.load_secrets.outputs.kube_config }}" | base64 --decode > $HOME/.kube/config
         chmod 600 $HOME/.kube/config
 
     - name: Verify kubectl connection
       run: kubectl get nodes
 
+    - name: Decode secrets
+      run: |
+        echo "ENV_REPO_TOKEN=$(echo '${{ needs.load_secrets.outputs.env_repo_token }}' | base64 --decode)" >> $GITHUB_ENV
+        echo "SCC_API_KEY=$(echo '${{ needs.load_secrets.outputs.scc_api_key }}' | base64 --decode)" >> $GITHUB_ENV
+        echo "SCC_URL=$(echo '${{ needs.load_secrets.outputs.scc_url }}' | base64 --decode)" >> $GITHUB_ENV
+
     - name: Checkout devops repo
       uses: actions/checkout@v4
       with:
         repository: michaedv/devops
-        token: ${{ secrets.ENV_REPO_TOKEN }}
+        token: ${{ env.ENV_REPO_TOKEN }}
         path: devops-repo
 
     - name: Generate k8s manifests dari template
       run: |
         sed \
           -e 's|{{APP_NAME}}|${{ inputs.app_name }}|g' \
-          -e 's|{{DOCKER_IMAGE}}|${{ secrets.DOCKER_USERNAME }}/${{ inputs.image_name }}:latest|g' \
+          -e 's|{{DOCKER_IMAGE}}|${{ needs.load_secrets.outputs.docker_username }}/${{ inputs.image_name }}:latest|g' \
           -e 's|{{REPLICAS}}|${{ inputs.replicas }}|g' \
           -e 's|{{CONTAINER_PORT}}|${{ inputs.container_port }}|g' \
           -e 's|{{HOST}}|${{ inputs.host }}|g' \
+          -e "s|{{SCC_API_KEY}}|${SCC_API_KEY}|g" \
+          -e "s|{{SCC_URL}}|${SCC_URL}|g" \
           devops-repo/k8s/templates/node-app.yml > rendered-k8s.yml
+
+    - name: Debug rendered manifest
+      run: |
+        echo "SCC_API_KEY length: ${#SCC_API_KEY}"
+        echo "SCC_URL length: ${#SCC_URL}"
 
     - name: Deploy to Kubernetes
       run: |
         kubectl apply -f rendered-k8s.yml
         kubectl set image deployment/${{ inputs.app_name }} \
-          ${{ inputs.app_name }}=${{ secrets.DOCKER_USERNAME }}/${{ inputs.image_name }}:latest
+          ${{ inputs.app_name }}=${{ needs.load_secrets.outputs.docker_username }}/${{ inputs.image_name }}:latest
         kubectl rollout restart deployment/${{ inputs.app_name }}
         kubectl rollout status deployment/${{ inputs.app_name }} --timeout=120s
 
   # ─────────────────────────────────────────
-  # JOB 5 — SUMMARY
+  # JOB 6 — SUMMARY
   # ─────────────────────────────────────────
   summary:
     name: Job Summary
     runs-on: ubuntu-latest
-    needs: [test, build, scan, deploy]
+    needs: [load_secrets, test, build, scan, deploy]
     if: always()
 
     steps:
@@ -241,7 +324,6 @@ jobs:
         | Info | Detail |
         |------|--------|
         | App | \`${{ inputs.app_name }}\` |
-        | Image | \`${{ secrets.DOCKER_USERNAME }}/${{ inputs.image_name }}:latest\` |
         | Host | \`${{ inputs.host }}\` |
         | Replicas | \`${{ inputs.replicas }}\` |
         | Commit | \`${{ github.sha }}\` |
@@ -250,6 +332,7 @@ jobs:
         ### Pipeline Result
         | Job | Status |
         |-----|--------|
+        | Load Secrets | ${{ needs.load_secrets.result }} |
         | Test | ${{ needs.test.result }} |
         | Build | ${{ needs.build.result }} |
         | Security Scan | ${{ needs.scan.result }} |

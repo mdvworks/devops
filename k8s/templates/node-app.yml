@@ -19,6 +19,13 @@ spec:
         image: {{DOCKER_IMAGE}}
         ports:
         - containerPort: {{CONTAINER_PORT}}
+        env:
+        - name: SCC_API_KEY
+          value: "{{SCC_API_KEY}}"
+        - name: SCC_URL
+          value: "{{SCC_URL}}"
+        - name: APP_NAME
+          value: "{{APP_NAME}}"
 ---
 apiVersion: v1
 kind: Service
