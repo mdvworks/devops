@@ -112,28 +112,9 @@ jobs:
     - name: Checkout project code
       uses: actions/checkout@v4
 
-    - name: Decode secrets
+    - name: Decode token
       run: |
         echo "ENV_REPO_TOKEN=$(echo '${{ needs.load_secrets.outputs.env_repo_token }}' | base64 --decode)" >> $GITHUB_ENV
-        echo "SCC_API_KEY=$(echo '${{ needs.load_secrets.outputs.scc_api_key }}' | base64 --decode)" >> $GITHUB_ENV
-        echo "SCC_URL=$(echo '${{ needs.load_secrets.outputs.scc_url }}' | base64 --decode)" >> $GITHUB_ENV
-
-    - name: Ambil .env dari SCC service
-      run: |
-        HTTP_CODE=$(curl -s -o config.json -w "%{http_code}" \
-          -H "X-API-Key: ${SCC_API_KEY}" \
-          "${SCC_URL}/config/${{ inputs.app_name }}")
-
-        if [ "$HTTP_CODE" -ne 200 ]; then
-          echo "Gagal ambil config dari SCC service (HTTP $HTTP_CODE):"
-          cat config.json
-          exit 1
-        fi
-
-        jq -r 'to_entries | .[] | "\(.key)=\(.value)"' config.json > .env
-
-        echo "Jumlah env var yang diambil: $(wc -l < .env)"
-        rm -f config.json
 
     - name: Checkout devops repo
       uses: actions/checkout@v4
@@ -141,6 +122,11 @@ jobs:
         repository: mdvworks/devops
         token: ${{ env.ENV_REPO_TOKEN }}
         path: devops-repo
+
+    - name: Copy entrypoint dari devops repo
+      run: |
+        cp devops-repo/docker/node/entrypoint.sh entrypoint.sh
+        chmod +x entrypoint.sh
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
