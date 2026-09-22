@@ -104,6 +104,11 @@ jobs:
       DOCKER_PASSWORD: ${{ needs.load_secrets.outputs.docker_password }}
 
     steps:
+    - name: Setup Tailscale
+      uses: tailscale/github-action@v2
+      with:
+        authkey: ${{ secrets.TS_AUTHKEY }}
+
     - name: Checkout project code
       uses: actions/checkout@v4
 
