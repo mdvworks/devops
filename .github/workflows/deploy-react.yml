@@ -120,9 +120,14 @@ jobs:
 
     - name: Ambil .env dari SCC service
       run: |
-        RESPONSE=$(wget -q -O - \
+        RESPONSE=$(wget --content-on-error -q -O - \
           --header="X-API-Key: ${SCC_API_KEY}" \
-          "${SCC_URL}/config/${{ inputs.app_name }}")
+          "${SCC_URL}/config/${{ inputs.app_name }}" 2>&1)
+
+        echo "=== Debug SCC response ==="
+        echo "SCC_URL: ${SCC_URL}/config/${{ inputs.app_name }}"
+        echo "Response: $RESPONSE"
+        echo "==========================="
 
         if [ -z "$RESPONSE" ]; then
           echo "❌ Failed to fetch config from SCC Service"
